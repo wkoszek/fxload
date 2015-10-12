@@ -1,5 +1,7 @@
 # fxload from Linux Hotplug project
 
+[![Build Status](https://travis-ci.org/wkoszek/fxload.svg?branch=master)](https://travis-ci.org/wkoszek/fxload)
+
 Imported sources of `fxload` project from Linux Hotplug project. Fetched
 from:
 
