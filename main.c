@@ -49,6 +49,7 @@
  *         manipulate as a USB device.
  */
 
+# include  <assert.h>
 # include  <stdlib.h>
 # include  <stdio.h>
 # include  <getopt.h>
@@ -69,7 +70,6 @@
 #include <syslog.h>
 #include <stdarg.h>
 
-
 static int dosyslog=0;
 
 void logerror(const char *format, ...)
@@ -89,6 +89,8 @@ void logerror(const char *format, ...)
 
 int main(int argc, char*argv[])
 {
+      struct ezusb_backend *backend = NULL;
+      const char	*backend_name = NULL;
       const char	*link_path = 0;
       const char	*ihex_path = 0;
       const char	*device_path = getenv("DEVICE");
@@ -98,8 +100,12 @@ int main(int argc, char*argv[])
       int		opt;
       int		config = -1;
 
-      while ((opt = getopt (argc, argv, "2vV?D:I:L:c:lm:s:t:")) != EOF)
+      while ((opt = getopt (argc, argv, "B:2vV?D:I:L:c:lm:s:t:")) != EOF)
       switch (opt) {
+
+	  case 'B':
+	    backend_name = optarg;
+	    break;
 
 	  case '2':		// original version of "-t fx2"
 	    type = "fx2";
@@ -165,6 +171,13 @@ int main(int argc, char*argv[])
 
       }
 
+      backend = dispatch_backend(backend_name);
+      if (backend == NULL) {
+	    fprintf(stderr, "Couldn't find backed '%s'\n", backend_name);
+	    goto usage;
+      }
+      assert(backend != NULL && "internal error: no backend chosen");
+
       if (config >= 0) {
 	    if (type == 0) {
 		logerror("must specify microcontroller type %s",
@@ -187,7 +200,7 @@ int main(int argc, char*argv[])
 usage:
 	    fputs ("usage: ", stderr);
 	    fputs (argv [0], stderr);
-	    fputs (" [-vV] [-l] [-t type] [-D devpath]\n", stderr);
+	    fputs (" [-vV] [-B backend] [-l] [-t type] [-D devpath]\n", stderr);
 	    fputs ("\t\t[-I firmware_hexfile] ", stderr);
 	    fputs ("[-s loader] [-c config_byte]\n", stderr);
 	    fputs ("\t\t[-L link] [-m mode]\n", stderr);
@@ -198,13 +211,14 @@ usage:
       }
 
       if (ihex_path) {
-	    int fd = open(device_path, O_RDWR);
+	    int error;
 	    int status;
 	    int	fx2;
 
-	    if (fd == -1) {
+	    error = ezusb_open(backend, device_path, O_RDWR);
+	    if (error != 0) {
 		logerror("%s : %s\n", strerror(errno), device_path);
-		return -1;
+		return error;
 	    }
 
 	    if (type == 0) {
@@ -222,22 +236,22 @@ usage:
 		/* first stage:  put loader into internal memory */
 		if (verbose)
 		    logerror("1st stage:  load 2nd stage loader\n");
-		status = ezusb_load_ram (fd, stage1, fx2, 0);
+		status = ezusb_load_ram (backend, stage1, fx2, 0);
 		if (status != 0)
 		    return status;
 
 		/* second stage ... write either EEPROM, or RAM.  */
 		if (config >= 0)
-		    status = ezusb_load_eeprom (fd, ihex_path, type, config);
+		    status = ezusb_load_eeprom (backend, ihex_path, type, config);
 		else
-		    status = ezusb_load_ram (fd, ihex_path, fx2, 1);
+		    status = ezusb_load_ram (backend, ihex_path, fx2, 1);
 		if (status != 0)
 		    return status;
 	    } else {
 		/* single stage, put into internal memory */
 		if (verbose)
 		    logerror("single stage:  load on-chip memory\n");
-		status = ezusb_load_ram (fd, ihex_path, fx2, 0);
+		status = ezusb_load_ram (backend, ihex_path, fx2, 0);
 		if (status != 0)
 		    return status;
 	    }

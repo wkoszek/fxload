@@ -21,6 +21,48 @@
  */
 #ident "$Id: ezusb.h,v 1.4 2008/10/13 21:25:29 dbrownell Exp $"
 
+struct ezusb_backend;
+
+typedef int ezusb_open_func_t(struct ezusb_backend *backend,
+    const char *devname, int mode);
+typedef int ezusb_close_func_t(struct ezusb_backend *backend);
+/* Type of a handler responsible for handling USB */
+typedef int ezusb_ctrl_msg_func_t(struct ezusb_backend	*backend,
+    unsigned char requestType, unsigned char request, unsigned short
+    value, unsigned short index, unsigned char *data, size_t length);
+
+enum {
+	EZUSB_INPUT,
+	EZUSB_OUTPUT
+};
+
+/* What particular backends provide */
+struct ezusb_backend {
+      const char *name;
+      void *priv_data;
+      ezusb_open_func_t *open;
+      ezusb_close_func_t *close;
+      ezusb_ctrl_msg_func_t *ctrl_msg;
+};
+
+/* Our main functions, that will call backend-specific routines */
+int ezusb_open(struct ezusb_backend *be, const char *device, int mode);
+int ezusb_close(struct ezusb_backend *be);
+int ezusb_ctrl_msg(struct ezusb_backend	*backend, unsigned char
+    requestType, unsigned char request, unsigned short value, unsigned
+    short index, unsigned char *data, size_t length);
+
+/* Our backend dispatcher */
+struct ezusb_backend *dispatch_backend(const char *backend);
+
+#ifdef __linux__
+/* Linux specific handler for USB */
+extern struct ezusb_backend ezusb_backend_linux;
+#endif
+
+#if !defined(__linux__) || defined(LIBUSB_SUPPORT)
+extern struct ezusb_backend ezusb_backend_libusb;
+#endif
 
 /*
  * This function loads the firmware from the given file into RAM.
@@ -31,8 +73,8 @@
  *
  * The target processor is reset at the end of this download.
  */
-extern int ezusb_load_ram (int dev, const char *path, int fx2, int stage);
-
+extern int ezusb_load_ram (struct ezusb_backend *backend, const char *path,
+    int fx2, int stage);
 
 /*
  * This function stores the firmware from the given file into EEPROM.
@@ -46,7 +88,7 @@ extern int ezusb_load_ram (int dev, const char *path, int fx2, int stage);
  * how to respond to the EEPROM write request.
  */
 extern int ezusb_load_eeprom (
-	int dev,		/* usbfs device handle */
+	struct ezusb_backend *backend,	/* USB backend handle */
 	const char *path,	/* path to hexfile */
 	const char *type,	/* fx, fx2, an21 */
 	int config		/* config byte for fx/fx2; else zero */
@@ -56,6 +98,9 @@ extern int ezusb_load_eeprom (
 /* boolean flag, says whether to write extra messages to stderr */
 extern int verbose;
 
+/* Our error logging function */
+extern void logerror(const char *format, ...)
+    __attribute__ ((format (printf, 1, 2)));
 
 /*
  * $Log: ezusb.h,v $

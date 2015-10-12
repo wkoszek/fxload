@@ -15,7 +15,7 @@ PROG = 			fxload
 
 CFLAGS =		-O -Wall $(RPM_OPT_FLAGS)
 
-FILES_SRC_C =		ezusb.c main.c
+FILES_SRC_C =		ezusb.c ezusb_linux.c ezusb_libusb.c main.c
 FILES_SRC_H =		ezusb.h
 FILES_SRC_OTHER =	README.txt COPYING Makefile fxload.8 a3load.hex
 FILES_SRC =		$(FILES_SRC_OTHER) $(FILES_SRC_H) $(FILES_SRC_C)
@@ -25,7 +25,20 @@ FILES_OBJ =		$(FILES_SRC_C:%.c=%.o)
 REV =			$(shell date "+%Y_%m_%d"| awk '{print $$1}')
 RELEASE_NAME =		$(PROG)-$(REV)
 
+LIBS_LIBUSB =		-lusb
+LIBS_NONLINUX = 	-lusb
 
+LIBS =
+
+# For GNU/Linux and LIBUSB.
+ifdef LIBUSB_SUPPORT
+CFLAGS+=		-DLIBUSB_SUPPORT
+LIBS =			$(LIBS_LIBUSB)
+endif
+# For other systems.
+ifneq ($(shell uname), Linux)
+LIBS =			$(LIBS_NONLINUX)
+endif
 
 # the interesting targets
 # NOTE:  the default build ("make all") labels itself as a
@@ -39,7 +52,7 @@ release:	rpms
 
 # object files
 $(PROG): $(FILES_OBJ)
-	$(CC) -o $(PROG) $(FILES_OBJ)
+	$(CC) -o $(PROG) $(FILES_OBJ) $(LIBS)
 
 %.o: %.c
 	$(CC) -c $(CFLAGS)  $< -o $@

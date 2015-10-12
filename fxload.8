@@ -30,6 +30,7 @@ fxload \- Firmware download to EZ-USB devices
 .B fxload
 .BI "[ \-v ]"
 .BI "[ \-l ]"
+.BI "[ \-B " backend "]"
 .BI "[ \-D " devpath " ]"
 .BI "[ \-I " hexfile " ]"
 .BI "[ \-t " type " ]"
@@ -187,6 +188,28 @@ such as
 This takes precedence over any
 .I DEVICE
 environment variable that may be set.
+If libusb backend is used, you must provide a device IDs
+within a string of format 'vid=<VID>,pid=<PID>'.
+For example, for Xilinx JTAG USB cable you may want to
+pass "vid=0x03fd,pid=0x000d" as an argument.
+Longer version of syntax has been provided to prevent 
+confusion, since in various systems vendor/product IDs
+are reported in different order.
+.TP
+.BI "\-B"
+specifies the backend used to provide USB functionality for
+.B fxload .
+Possible values include "linux" and "libusb". On GNU/Linux systems,
+"linux" is the default and refers to Linux-only ioctl() interface.
+For "libusb",
+.B fxload
+must be compiled with
+.B LIBUSB_SUPPORT
+compile option.
+On systems different than GNU/Linux, "libusb" is always implied.
+See
+.B "\-D"
+on how to pass a device specification for particular backends.
 .SH "NOTES"
 .PP
 This program implements one extension to the standard "hex file" format.

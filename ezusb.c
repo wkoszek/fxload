@@ -20,6 +20,9 @@
  */
 #ident "$Id: ezusb.c,v 1.12 2008/10/13 21:25:29 dbrownell Exp $"
 
+# include  <sys/types.h>
+
+# include  <assert.h>
 # include  <stdio.h>
 # include  <errno.h>
 # include  <assert.h>
@@ -29,14 +32,7 @@
 
 # include  <sys/ioctl.h>
 
-# include  <linux/version.h>
-# include  <linux/usb/ch9.h>
-# include  <linux/usbdevice_fs.h>
-
 # include "ezusb.h"
-
-extern void logerror(const char *format, ...)
-    __attribute__ ((format (printf, 1, 2)));
 
 /*
  * This file contains functions for downloading firmware into Cypress
@@ -56,6 +52,79 @@ extern void logerror(const char *format, ...)
  * references to that vendor (which was later merged into Cypress).
  * The Cypress FX parts are largely compatible with the Anchorhip ones.
  */
+
+/*
+ * We try to make our best to have at least one pointing to the correct
+ * USB accessory function. For Linux, by default it be "linux" (native
+ * ioctl() calls to the kernel). For other systems, we try to fit within
+ * "libusb" world.
+ */
+
+static struct ezusb_backend *ezusb_backends[] = {
+#if defined(__linux__)
+      &ezusb_backend_linux,
+#endif
+#if !defined(__linux__) || defined(LIBUSB_SUPPORT)
+      &ezusb_backend_libusb,
+#endif
+      NULL,
+};
+
+struct ezusb_backend *dispatch_backend(const char *backend)
+{
+      struct ezusb_backend *be;
+      int i;
+
+      if (backend == NULL)
+         return (ezusb_backends[0]);
+
+      for (i = 0; ; i++) {
+           be = ezusb_backends[i];
+	   if (be == NULL)
+	       break;
+           if (strcmp(be->name, backend) == 0)
+	       return (be);
+      }
+      return (NULL);
+}
+
+int ezusb_open(struct ezusb_backend *be, const char *device, int mode)
+{
+
+     assert(be != NULL);
+     assert(device != NULL);
+
+     return (be->open(be, device, mode));
+}
+
+int ezusb_close(struct ezusb_backend *be)
+{
+
+     assert(be != NULL);
+
+     return (be->close(be));
+}
+
+int ezusb_ctrl_msg(
+    struct ezusb_backend		*backend,
+    unsigned char			requestType,
+    unsigned char			request,
+    unsigned short			value,
+    unsigned short			index,
+    unsigned char			*data,
+    size_t				length
+) {
+      int error;
+
+      assert(backend != NULL && "internal error: no backend");
+      assert(backend->ctrl_msg != NULL && "no handler for ctrl_msg");
+      error = backend->ctrl_msg(backend, requestType, request, value, index,
+	  data, length);
+      if (error < 0)
+	      logerror("ctrl_msg returned an error=%d, errno=%d\n", error,
+		  errno);
+      return (error);
+}
 
 int verbose;
 
@@ -116,56 +185,6 @@ static int fx2lp_is_external (unsigned short addr, size_t len)
 	return 1;
 }
 
-/*****************************************************************************/
-
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,5,3)
-/*
- * in 2.5, "struct usbdevfs_ctrltransfer" fields were renamed
- * to match the USB spec
- */
-#	define bRequestType	requesttype
-#	define bRequest		request
-#	define wValue		value
-#	define wIndex		index
-#	define wLength		length
-#endif
-
-/*
- * Issue a control request to the specified device.
- * This is O/S specific ...
- */
-static inline int ctrl_msg (
-    int					device,
-    unsigned char			requestType,
-    unsigned char			request,
-    unsigned short			value,
-    unsigned short			index,
-    unsigned char			*data,
-    size_t				length
-) {
-    struct usbdevfs_ctrltransfer	ctrl;
-
-    if (length > USHRT_MAX) {
-	logerror("length too big\n");
-	return -EINVAL;
-    }
-
-    /* 8 bytes SETUP */
-    ctrl.bRequestType = requestType;
-    ctrl.bRequest = request;
-    ctrl.wValue   = value;
-    ctrl.wLength  = (unsigned short) length;
-    ctrl.wIndex = index;
-
-    /* "length" bytes DATA */
-    ctrl.data = data;
-
-    ctrl.timeout = 10000;
-
-    return ioctl (device, USBDEVFS_CONTROL, &ctrl);
-}
-
-
 /*
  * These are the requests (bRequest) that the bootstrap loader is expected
  * to recognize.  The codes are reserved by Cypress, and these values match
@@ -178,12 +197,11 @@ static inline int ctrl_msg (
 #define RW_MEMORY	0xA3
 #define GET_EEPROM_SIZE	0xA5
 
-
 /*
  * Issues the specified vendor-specific read request.
  */
 static int ezusb_read (
-    int					device,
+    struct ezusb_backend		*backend,
     char				*label,
     unsigned char			opcode,
     unsigned short			addr,
@@ -194,8 +212,8 @@ static int ezusb_read (
 
     if (verbose)
 	logerror("%s, addr 0x%04x len %4zd (0x%04zx)\n", label, addr, len, len);
-    status = ctrl_msg (device,
-	USB_DIR_IN | USB_TYPE_VENDOR | USB_RECIP_DEVICE, opcode,
+    status = ezusb_ctrl_msg (backend,
+	EZUSB_INPUT, opcode,
 	addr, 0,
 	data, len);
     if (status != len) {
@@ -211,7 +229,7 @@ static int ezusb_read (
  * Issues the specified vendor-specific write request.
  */
 static int ezusb_write (
-    int					device,
+    struct ezusb_backend		*backend,
     char				*label,
     unsigned char			opcode,
     unsigned short			addr,
@@ -222,8 +240,8 @@ static int ezusb_write (
 
     if (verbose)
 	logerror("%s, addr 0x%04x len %4zd (0x%04zx)\n", label, addr, len, len);
-    status = ctrl_msg (device,
-	USB_DIR_OUT | USB_TYPE_VENDOR | USB_RECIP_DEVICE, opcode,
+    status = ezusb_ctrl_msg (backend,
+	EZUSB_OUTPUT, opcode,
 	addr, 0,
 	(unsigned char *) data, len);
     if (status != len) {
@@ -240,7 +258,7 @@ static int ezusb_write (
  * Returns false on error.
  */
 static int ezusb_cpucs (
-    int			device,
+    struct ezusb_backend	*backend,
     unsigned short	addr,
     int			doRun
 ) {
@@ -249,8 +267,8 @@ static int ezusb_cpucs (
 
     if (verbose)
 	logerror("%s\n", data ? "stop CPU" : "reset CPU");
-    status = ctrl_msg (device,
-	USB_DIR_OUT | USB_TYPE_VENDOR | USB_RECIP_DEVICE,
+    status = ezusb_ctrl_msg (backend,
+	EZUSB_OUTPUT, 
 	RW_INTERNAL,
 	addr, 0,
 	&data, 1);
@@ -270,9 +288,10 @@ static int ezusb_cpucs (
  * *data == 0 means it uses 8 bit addresses (or there is no EEPROM),
  * *data == 1 means it uses 16 bit addresses
  */
-static inline int ezusb_get_eeprom_type (int fd, unsigned char *data)
+static inline int ezusb_get_eeprom_type (struct ezusb_backend *backend,
+    unsigned char *data)
 {
-    return ezusb_read (fd, "get EEPROM size", GET_EEPROM_SIZE, 0, data, 1);
+    return ezusb_read (backend, "get EEPROM size", GET_EEPROM_SIZE, 0, data, 1);
 }
 
 /*****************************************************************************/
@@ -445,7 +464,7 @@ typedef enum {
 } ram_mode;
 
 struct ram_poke_context {
-    int		device;
+    struct ezusb_backend *backend;
     ram_mode	mode;
     unsigned	total, count;
 };
@@ -500,7 +519,7 @@ static int ram_poke (
     /* Retry this till we get a real error. Control messages are not
      * NAKed (just dropped) so time out means is a real problem.
      */
-    while ((rc = ezusb_write (ctx->device,
+    while ((rc = ezusb_write (ctx->backend,
 		    external ? "write external" : "write on-chip",
 		    external ? RW_MEMORY : RW_INTERNAL,
 		    addr, data, len)) < 0
@@ -526,7 +545,7 @@ static int ram_poke (
  * memory is written, expecting a second stage loader to have already
  * been loaded.  Then file is re-parsed and on-chip memory is written.
  */
-int ezusb_load_ram (int fd, const char *path, int fx2, int stage)
+int ezusb_load_ram (struct ezusb_backend *backend, const char *path, int fx2, int stage)
 {
     FILE			*image;
     unsigned short		cpucs_addr;
@@ -558,7 +577,7 @@ int ezusb_load_ram (int fd, const char *path, int fx2, int stage)
 	ctx.mode = internal_only;
 
 	/* don't let CPU run while we overwrite its code/data */
-	if (!ezusb_cpucs (fd, cpucs_addr, 0))
+	if (!ezusb_cpucs (backend, cpucs_addr, 0))
 	    return -1;
 
     /* 2nd stage, first part? loader was already downloaded */
@@ -571,7 +590,7 @@ int ezusb_load_ram (int fd, const char *path, int fx2, int stage)
     }
 
     /* scan the image, first (maybe only) time */
-    ctx.device = fd;
+    ctx.backend = backend;
     ctx.total = ctx.count = 0;
     status = parse_ihex (image, &ctx, is_external, ram_poke);
     if (status < 0) {
@@ -584,7 +603,7 @@ int ezusb_load_ram (int fd, const char *path, int fx2, int stage)
 	ctx.mode = skip_external;
 
 	/* don't let CPU run while we overwrite the 1st stage loader */
-	if (!ezusb_cpucs (fd, cpucs_addr, 0))
+	if (!ezusb_cpucs (backend, cpucs_addr, 0))
 	    return -1;
 
 	/* at least write the interrupt vectors (at 0x0000) for reset! */
@@ -603,7 +622,7 @@ int ezusb_load_ram (int fd, const char *path, int fx2, int stage)
 	    ctx.total, ctx.count, ctx.total / ctx.count);
 
     /* now reset the CPU so it runs what we just downloaded */
-    if (!ezusb_cpucs (fd, cpucs_addr, 1))
+    if (!ezusb_cpucs (backend, cpucs_addr, 1))
 	return -1;
 
     return 0;
@@ -615,7 +634,7 @@ int ezusb_load_ram (int fd, const char *path, int fx2, int stage)
  * For writing to EEPROM using a 2nd stage loader
  */
 struct eeprom_poke_context {
-    int			device;
+    struct ezusb_backend *backend;
     unsigned short	ee_addr;	/* next free address */
     int			last;
 };
@@ -654,13 +673,13 @@ static int eeprom_poke (
     header [3] = addr;
     if (ctx->last)
 	header [0] |= 0x80;
-    if ((rc = ezusb_write (ctx->device, "write EEPROM segment header",
+    if ((rc = ezusb_write (ctx->backend, "write EEPROM segment header",
 		    RW_EEPROM,
 		    ctx->ee_addr, header, 4)) < 0)
 	return rc;
 
     /* write code/data */
-    if ((rc = ezusb_write (ctx->device, "write EEPROM segment",
+    if ((rc = ezusb_write (ctx->backend, "write EEPROM segment",
 		    RW_EEPROM,
 		    ctx->ee_addr + 4, data, len)) < 0)
 	return rc;
@@ -679,7 +698,7 @@ static int eeprom_poke (
  * Caller must have pre-loaded a second stage loader that knows how
  * to handle the EEPROM write requests.
  */
-int ezusb_load_eeprom (int dev, const char *path, const char *type, int config)
+int ezusb_load_eeprom (struct ezusb_backend *backend, const char *path, const char *type, int config)
 {
     FILE			*image;
     unsigned short		cpucs_addr;
@@ -688,7 +707,7 @@ int ezusb_load_eeprom (int dev, const char *path, const char *type, int config)
     int				status;
     unsigned char		value, first_byte;
 
-    if (ezusb_get_eeprom_type (dev, &value) != 1 || value != 1) {
+    if (ezusb_get_eeprom_type (backend, &value) != 1 || value != 1) {
 	logerror("don't see a large enough EEPROM\n");
 	return -1;
     }
@@ -763,13 +782,13 @@ int ezusb_load_eeprom (int dev, const char *path, const char *type, int config)
      * in case of problems writing it
      */
     value = 0x00;
-    status = ezusb_write (dev, "mark EEPROM as unbootable",
+    status = ezusb_write (backend, "mark EEPROM as unbootable",
 	    RW_EEPROM, 0, &value, sizeof value);
     if (status < 0)
 	return status;
 
     /* scan the image, write to EEPROM */
-    ctx.device = dev;
+    ctx.backend = backend;
     ctx.last = 0;
     status = parse_ihex (image, &ctx, is_external, eeprom_poke);
     if (status < 0) {
@@ -789,7 +808,7 @@ int ezusb_load_eeprom (int dev, const char *path, const char *type, int config)
     /* write the config byte for FX, FX2 */
     if (strcmp ("an21", type) != 0) {
 	value = config;
-	status = ezusb_write (dev, "write config byte",
+	status = ezusb_write (backend, "write config byte",
 		RW_EEPROM, 7, &value, sizeof value);
 	if (status < 0)
 	    return status;
@@ -798,14 +817,14 @@ int ezusb_load_eeprom (int dev, const char *path, const char *type, int config)
     /* EZ-USB FX has a reserved byte */
     if (strcmp ("fx", type) == 0) {
 	value = 0;
-	status = ezusb_write (dev, "write reserved byte",
+	status = ezusb_write (backend, "write reserved byte",
 		RW_EEPROM, 8, &value, sizeof value);
 	if (status < 0)
 	    return status;
     }
 
     /* make the EEPROM say to boot from this EEPROM */
-    status = ezusb_write (dev, "write EEPROM type byte",
+    status = ezusb_write (backend, "write EEPROM type byte",
 	    RW_EEPROM, 0, &first_byte, sizeof first_byte);
     if (status < 0)
 	return status;
