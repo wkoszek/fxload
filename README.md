@@ -22,4 +22,6 @@ Provided is the description for the `multios` branch:
 	git clone https://github.com/wkoszek/fxload.git
 	git checkout multios
 	make
-	./fxload -B
+	./fxload -B -D vid=0x03fd,pid=0x000d ...
+
+Where `vid` is Vendor ID and `pid` is Product ID as seen in `lsusb`.
