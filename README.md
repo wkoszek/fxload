@@ -23,7 +23,12 @@ Provided is the description for the `multios` branch:
 
 	git clone https://github.com/wkoszek/fxload.git
 	git checkout multios
-	make
+	LIBUSB_SUPPORT=1 make
 	./fxload -B -D vid=0x03fd,pid=0x000d ...
 
 Where `vid` is Vendor ID and `pid` is Product ID as seen in `lsusb`.
+
+# Credits
+
+Carl Karsten, carl (at) personnelware.com: testing the most recent release
+and pointing out `LIBUSB_SUPPORT` is necessary.
