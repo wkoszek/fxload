@@ -32,3 +32,8 @@ Where `vid` is Vendor ID and `pid` is Product ID as seen in `lsusb`.
 
 Carl Karsten, carl (at) personnelware.com: testing the most recent release
 and pointing out `LIBUSB_SUPPORT` is necessary.
+
+# Author
+
+- Wojciech Adam Koszek, [wojciech@koszek.com](mailto:wojciech@koszek.com)
+- [http://www.koszek.com](http://www.koszek.com)
